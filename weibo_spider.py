@@ -9,10 +9,11 @@ from pyppeteer import launch
 import asyncio
 from lxml import etree
 import aiohttp
+from .settings import USERNAME, PASSWORD, WEIBO_ID
 
 url = 'https://passport.weibo.cn/signin/login'
 
-start_url = 'https://weibo.cn/3042054054?filter=1'
+start_url = 'https://weibo.cn/{}?filter=1'.format(WEIBO_ID)
 
 sema = asyncio.Semaphore(3)
 
@@ -22,8 +23,8 @@ async def get_cookies():
     page = await browser.newPage()
     await page.goto(url)
     await page.waitFor(2000)
-    await page.type('#loginName', 'alukongfu@126.com')
-    await page.type('#loginPassword', 'hayabusa1300(!)')
+    await page.type('#loginName', USERNAME)
+    await page.type('#loginPassword', PASSWORD)
     await page.keyboard.press('Enter')
     await page.waitFor(3000)
     await page.goto(start_url)
