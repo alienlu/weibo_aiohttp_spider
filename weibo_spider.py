@@ -9,51 +9,59 @@ from pyppeteer import launch
 import asyncio
 from lxml import etree
 import aiohttp
-from .settings import USERNAME, PASSWORD, WEIBO_ID
+import settings
 
 url = 'https://passport.weibo.cn/signin/login'
-
-start_url = 'https://weibo.cn/{}?filter=1'.format(WEIBO_ID)
-
+start_url = 'https://weibo.cn/{}?filter=1'.format(settings.WEIBO_ID)
+'''设置并发数'''
 sema = asyncio.Semaphore(3)
+
+headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.90 Mobile Safari/537.36'}
 
 
 async def get_cookies():
+    '''启动puppeteer模拟登录微博'''
     browser = await launch(args=['--no-sandbox'])
     page = await browser.newPage()
-    await page.goto(url)
-    await page.waitFor(2000)
-    await page.type('#loginName', USERNAME)
-    await page.type('#loginPassword', PASSWORD)
-    await page.keyboard.press('Enter')
-    await page.waitFor(3000)
-    await page.goto(start_url)
-    cookies = await page.cookies()
-    page_count = await page.xpath('//input[@name="mp"]')
-    page_count = await page_count[0].getProperty('value')
-    page_count = await page_count.jsonValue()
-    print('total page {}'.format(page_count))
-    await browser.close()
-    new_cookies = {}
-    for c in cookies:
-        new_cookies[c['name']] = c['value']
-    print('get cookies')
-    return new_cookies, page_count
+    try:
+        await page.goto(url)
+        await page.waitFor(2000)
+        await page.type('#loginName', settings.USERNAME)
+        await page.type('#loginPassword', settings.PASSWORD)
+        await page.keyboard.press('Enter')
+        await page.waitFor(3000)
+        await page.goto(start_url)
+        cookies = await page.cookies()
+        page_count = await page.xpath('//input[@name="mp"]')
+        page_count = await page_count[0].getProperty('value')
+        page_count = await page_count.jsonValue()
+        print('总共有{}页需要爬取'.format(page_count))
+        await browser.close()
+        new_cookies = {}
+        for c in cookies:
+            new_cookies[c['name']] = c['value']
+        print('获取登录状态成功')
+        return new_cookies, page_count
+    except Exception as e:
+        print('获取登录状态失败')
+        print(e)
 
 
 async def download(session, url, cookies):
-    async with session.get(url=url, cookies=cookies) as response:
+    '''下载页面'''
+    async with session.get(url=url, headers=headers, cookies=cookies) as response:
         response = await response.text()
+        '''暂停5秒避免反爬'''
+        await asyncio.sleep(5)
         return response.encode('utf-8')
 
 
 async def parse(session, cookies, html, loop):
-    if not html:
-        return []
+    '''解析出所有的图片URL并进行下载'''
     response = etree.HTML(html)
-    title = response.xpath('//div[@class="c"]')
-    for img in title:
-        title = img.xpath('.//span[@class="ctt"]/text()')
+    title_imgs = response.xpath('//div[@class="c"]')
+    for img in title_imgs:
+#        title = img.xpath('.//span[@class="ctt"]/text()')[0]
         imgs = img.xpath('.//a[contains(text(), "组图")]')
         single_img_url = img.xpath('.//div[2]//a[contains(text(),"原图")]/@href')
         multi_img_url = img.xpath('.//img[contains(@alt, "图片加载")]/@src')
@@ -74,10 +82,10 @@ async def parse(session, cookies, html, loop):
 
 
 async def download_img(session, img_url):
+    '''下载图片'''
     img_url = 'http://ww2.sinaimg.cn/large/' + img_url
-    print(img_url)
     try:
-        async with session.get(url=img_url) as response:
+        async with session.get(url=img_url, headers=headers) as response:
             with open('{}'.format('images/' + img_url.split('/')[-1]), 'wb') as w:
                 assert response.status == 200
                 while 1:
@@ -85,7 +93,9 @@ async def download_img(session, img_url):
                     if not img_resp:
                         break
                     w.write(img_resp)
+            await asyncio.sleep(5)
     except Exception as e:
+        print('下载图片错误{}'.format(img_url))
         print(e)
 
 
@@ -100,6 +110,8 @@ async def start(url, cookies, loop):
 if '__main__' == __name__:
     loop = asyncio.get_event_loop()
     cookies, page_count = loop.run_until_complete(get_cookies())
-    tasks = [asyncio.ensure_future(start(start_url + '&page={}'.format(page), cookies, loop)) for page in range(1, int(page_count) + 1)]
-    tasks = asyncio.gather(*tasks)
-    loop.run_until_complete(tasks)
+    if cookies and page_count:
+        '''获取总页数后生成每一页的URL添加到任务里'''
+        tasks = [asyncio.ensure_future(start(start_url + '&page={}'.format(page), cookies, loop)) for page in range(1, int(page_count) + 1)]
+        tasks = asyncio.gather(*tasks)
+        loop.run_until_complete(tasks)
