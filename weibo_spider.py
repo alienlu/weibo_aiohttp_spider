@@ -10,11 +10,12 @@ import asyncio
 from lxml import etree
 import aiohttp
 import settings
+import os
 
 url = 'https://passport.weibo.cn/signin/login'
 start_url = 'https://weibo.cn/{}?filter=1'.format(settings.WEIBO_ID)
 '''设置并发数'''
-sema = asyncio.Semaphore(3)
+sema = asyncio.Semaphore(2)
 
 headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.90 Mobile Safari/537.36'}
 
@@ -61,7 +62,6 @@ async def parse(session, cookies, html, loop):
     response = etree.HTML(html)
     title_imgs = response.xpath('//div[@class="c"]')
     for img in title_imgs:
-#        title = img.xpath('.//span[@class="ctt"]/text()')[0]
         imgs = img.xpath('.//a[contains(text(), "组图")]')
         single_img_url = img.xpath('.//div[2]//a[contains(text(),"原图")]/@href')
         multi_img_url = img.xpath('.//img[contains(@alt, "图片加载")]/@src')
@@ -75,10 +75,11 @@ async def parse(session, cookies, html, loop):
             continue
         elif single_img_url:
             single_img_url = single_img_url[0].split('=')[-1]
-            asyncio.ensure_future(download_img(session, single_img_url))
+            loop.create_task(download_img(session, single_img_url))
         elif multi_img_url:
             multi_img_url = [img.split('/')[-1] for img in multi_img_url]
-            [asyncio.ensure_future(download_img(session, img_url)) for img_url in multi_img_url]
+            [loop.create_task(download_img(session, img_url)) for img_url in multi_img_url]
+    await asyncio.sleep(5)
 
 
 async def download_img(session, img_url):
@@ -86,13 +87,14 @@ async def download_img(session, img_url):
     img_url = 'http://ww2.sinaimg.cn/large/' + img_url
     try:
         async with session.get(url=img_url, headers=headers) as response:
-            with open('{}'.format('images/' + img_url.split('/')[-1]), 'wb') as w:
-                assert response.status == 200
+            assert response.status == 200
+            with open('{}'.format('images/{}/'.format(settings.WEIBO_ID) + img_url.split('/')[-1].strip('.jpg') + '.jpg'), 'wb') as w:
                 while 1:
                     img_resp = await response.content.read()
                     if not img_resp:
                         break
                     w.write(img_resp)
+            print('download {} end'.format(img_url))
             await asyncio.sleep(5)
     except Exception as e:
         print('下载图片错误{}'.format(img_url))
@@ -108,6 +110,14 @@ async def start(url, cookies, loop):
 
 
 if '__main__' == __name__:
+    if os.path.exists('images/{}'.format(settings.WEIBO_ID)):
+        print('ID目录存在')
+        pass
+    else:
+        print('ID目录不存在')
+        os.mkdir('images/{}'.format(settings.WEIBO_ID))
+        print('创建ID目录成功')
+
     loop = asyncio.get_event_loop()
     cookies, page_count = loop.run_until_complete(get_cookies())
     if cookies and page_count:
